@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug with LLDB",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/obstacle_maker",
+            "args": [],
+            "cwd": "${workspaceFolder}/build",
+            "stopOnEntry": false,
+            "terminal": "integrated"
+        }
+    ]
+}
