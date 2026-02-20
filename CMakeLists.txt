@@ -78,32 +78,58 @@ add_compile_options(
 # third_party super-library
 # ============================================================================================
 
-file(GLOB_RECURSE THIRD_PARTY_C
+# ------------------------------------------------
+# C third party
+# ------------------------------------------------
+
+file(GLOB_RECURSE THIRD_PARTY_C CONFIGURE_DEPENDS
+    "third_party/rlImGui/*.cpp"
+    "third_party/cimgui/*.cpp"
 )
+add_library(third_party_c STATIC 
+    ${THIRD_PARTY_C}
+) 
+target_include_directories(third_party_c 
+PUBLIC 
+    third_party/rlImGui
+    third_party/cimgui
+    third_party/raygui
+PRIVATE
+    third_party/cimgui/imgui
+)
+target_link_libraries(third_party_c PUBLIC 
+    raylib
+    glfw
+    #lua
+)
+
+# ------------------------------------------------
+# Cpp third party
+# ------------------------------------------------
 
 file(GLOB_RECURSE THIRD_PARTY_CPP CONFIGURE_DEPENDS
     "third_party/rlImGui/*.cpp"
     "third_party/cimgui/*.cpp"
 )
 
-add_library(third_party STATIC
-    ${THIRD_PARTY_C}
+add_library(third_party_cpp STATIC
     ${THIRD_PARTY_CPP}
+    ${THIRD_PARTY_C}
 )
 
-target_include_directories(third_party 
+target_include_directories(third_party_cpp 
 PUBLIC
     third_party/earcut
     third_party/rlImGui
-    third_party/cimgui
     third_party/cimgui/imgui
+    third_party/raygui
 PRIVATE
 )
 
-target_link_libraries(third_party PUBLIC
+target_link_libraries(third_party_cpp PUBLIC
     raylib
     glfw
-    lua
+    #lua
 )
 
 set_source_files_properties(${THIRD_PARTY_CPP}
@@ -119,26 +145,51 @@ file(GLOB PROJECT_DIRS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/projects" "projects
 foreach(PROJ ${PROJECT_DIRS})
     if (IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/projects/${PROJ}")
 
-        file(GLOB_RECURSE PROJ_SOURCES
-            "projects/${PROJ}/*.c"
-            "projects/${PROJ}/*.cpp"
-            "projects/${PROJ}/*.h"
-        )
+        # -------------------------------
+        # determine if C or Cpp project
+        # -------------------------------
 
-        add_executable(${PROJ} ${PROJ_SOURCES})
+        if (PROJ MATCHES "_cpp$")
 
+            file(GLOB_RECURSE PROJ_SOURCES
+                "projects/${PROJ}/*.c"
+                "projects/${PROJ}/*.cpp"
+                "projects/${PROJ}/*.h"
+                "projects/${PROJ}/*.hpp"
+            )
+            add_executable(${PROJ} ${PROJ_SOURCES})
+            target_link_libraries(${PROJ} PRIVATE
+                third_party_cpp
+            )
+
+        elseif (PROJ MATCHES "_c$")
+
+            file(GLOB_RECURSE PROJ_SOURCES
+                "projects/${PROJ}/*.c"
+                "projects/${PROJ}/*.h"
+            )
+            add_executable(${PROJ} ${PROJ_SOURCES})
+            target_link_libraries(${PROJ} PRIVATE
+                third_party_c
+            )
+
+        else()
+
+            # skip directories that dont match "_cpp" nor "_c" suffix
+            continue()
+
+        endif()
+
+        
+        # ----------------------------------
+        # common settings across projects
+        # ----------------------------------
         target_include_directories(${PROJ} PUBLIC
-            projects/${PROJ}
+            ${CMAKE_CURRENT_SOURCE_DIR}/projects/${PROJ}
         )
-
-        target_link_libraries(${PROJ} PRIVATE
-            third_party
-        )
-
         set_target_properties(${PROJ} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         )
-
         target_compile_definitions(${PROJ} PUBLIC
             ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets/"
         )

@@ -11,7 +11,7 @@ git clone --detph 1 https://github.com/LeapersEdge/faafa/
 cd faafa
 mkdir build
 cd build
-cmake ..
+cmake -DCMAKE_BUILD_TYPE=Debug ..
 make -j$(nproc)
 ```
 Windows build: not supported (tho should still work with this CMakeLists.txt, likely with minor modifications)
@@ -19,6 +19,8 @@ Windows build: not supported (tho should still work with this CMakeLists.txt, li
 - All projects are in `projects` directory
 - Binaries will have name of project directory
 - No support for building only certain projects (build all or nothing, or just delete all you dont want to build)
+- Directories in `projects` that end with "`_c`" suffix are C projects and are compiled as such with their `third_party_c` libs defined in `CMakeLists.txt`
+- Directories in `projects` that end with "`_cpp`" suffix are C++ projects and are compiled as such with their `third_party_cpp` libs defined in `CMakeLists.txt`
 
 # Tags & Releases
 
