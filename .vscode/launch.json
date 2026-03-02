@@ -5,7 +5,7 @@
             "name": "Debug with LLDB",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/build/obstacle_maker_cpp",
+            "program": "${workspaceFolder}/build/chip8_c",
             "args": [],
             "cwd": "${workspaceFolder}/build",
             "stopOnEntry": false,
