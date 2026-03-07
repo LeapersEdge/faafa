@@ -2,10 +2,12 @@
 //
 // DEPENDENCIES:
 // - C11
+// - C++17
 // - raylib 5.5 (GLFW backend)
 //
 // DOCUMENTATION:
 // - http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
+// - everything except GUI drawing is done in C style and should compile
 //
 // *************************************************
 
@@ -13,6 +15,10 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
+
+#include "imgui.h"
+#include "rlImGui.h"
+#include "filesystem_browser.hpp"
 
 // table of contents:
 // STRUCTS/GLOBALS
@@ -80,7 +86,7 @@ typedef struct
                 bool key[16];
             };
         } 
-        old;
+        previous;
         
         struct
         {
@@ -96,7 +102,7 @@ typedef struct
                 bool key[16];
             };
         }
-        new;
+        current;
     }
     keyboard;
 }
@@ -118,22 +124,31 @@ typedef struct  // keyboard bindings for CHIP-8
 }
 C8_Input;
 
-uint8_t font_0[5] = {0xF0, 0x90, 0x90, 0x90, 0xF0};
-uint8_t font_1[5] = {0x20, 0x60, 0x20, 0x20, 0x70};
-uint8_t font_2[5] = {0xF0, 0x10, 0xF0, 0x80, 0xF0};
-uint8_t font_3[5] = {0xF0, 0x10, 0xF0, 0x10, 0xF0};
-uint8_t font_4[5] = {0x90, 0x90, 0xF0, 0x10, 0x10};
-uint8_t font_5[5] = {0xF0, 0x80, 0xF0, 0x10, 0xF0};
-uint8_t font_6[5] = {0xF0, 0x80, 0xF0, 0x90, 0xF0};
-uint8_t font_7[5] = {0xF0, 0x10, 0x20, 0x40, 0x40};
-uint8_t font_8[5] = {0xF0, 0x90, 0xF0, 0x90, 0xF0};
-uint8_t font_9[5] = {0xF0, 0x90, 0xF0, 0x10, 0xF0};
-uint8_t font_A[5] = {0xF0, 0x90, 0xF0, 0x90, 0x90};
-uint8_t font_B[5] = {0xE0, 0x90, 0xE0, 0x90, 0xE0};
-uint8_t font_C[5] = {0xF0, 0x80, 0x80, 0x80, 0xF0};
-uint8_t font_D[5] = {0xE0, 0x90, 0x90, 0x90, 0xE0};
-uint8_t font_E[5] = {0xF0, 0x80, 0xF0, 0x80, 0xF0};
-uint8_t font_F[5] = {0xF0, 0x80, 0xF0, 0x80, 0x80};
+// ------------------------------------------------------
+// GLOBALS
+
+C8_Context c8_ctx;
+
+struct
+{
+    int display_pixel_size;
+    C8_Input c8_input_bindings;
+    int c8_frequency;
+    int targetFPS;
+    Color off_pixel_color;
+    Color on_pixel_color;
+}
+settings;
+
+struct
+{
+    struct
+    {
+
+    }
+    draw;
+}
+gui;
 
 // =======================================================================================
 //
@@ -190,15 +205,23 @@ bool Inst_LD_reg_Iptr(C8_Context* ctx, uint16_t instruction);   // Fx65
 
 int main()
 {
-    InitWindow(640, 320, "CHIP-8");
-    SetTargetFPS(60);
+    settings.targetFPS = 60;
+    settings.c8_input_bindings = Load_C8_Input_Default();
+    settings.display_pixel_size = 10;
+    settings.c8_frequency = 2000;
+    settings.off_pixel_color = BLACK;
+    settings.on_pixel_color = ORANGE;
+    
+    InitWindow(800, 800, "CHIP-8");
+    SetTargetFPS(settings.targetFPS);
     InitAudioDevice();
+    rlImGuiSetup(true);
 
-    int sample_rate = 44100;
+    unsigned int sample_rate = 44100;
     float frequency = 523.25f;
-    int sample_count = sample_rate * 0.13f;
+    unsigned int sample_count = sample_rate * 0.13f;
     float* samples = (float*)MemAlloc(sizeof(float)*sample_count);
-    for (int i = 0; i < sample_count; i++) 
+    for (unsigned int i = 0; i < sample_count; i++) 
         samples[i] = sinf(2.0f * PI * frequency * i / sample_rate);
     Wave wave = {
         .frameCount = sample_count,
@@ -207,73 +230,139 @@ int main()
         .channels = 1,
         .data = samples
     };
-
     Sound beep = LoadSoundFromWave(wave);
 
-    C8_Context ctx = Load_C8_Context(ASSETS "CH8_test_roms/5-quirks.ch8");
-    C8_Input input_bindings = Load_C8_Input_Default();
+    c8_ctx = Load_C8_Context(ASSETS "CH8_test_roms/Airplane.ch8");
+
+    // ensure that GetFrameTime() initializes to non 0
+    BeginDrawing();
+    ClearBackground(GRAY);
+    EndDrawing();
 
     while (!WindowShouldClose())
     {
         // -----------------------------------
         // UPDATE
 
-        if (ctx.cpu.regDT)
-            ctx.cpu.regDT--;
-        if (ctx.cpu.regST)
+        if (c8_ctx.cpu.regDT)
+            c8_ctx.cpu.regDT--;
+        if (c8_ctx.cpu.regST)
         {
             PlaySound(beep);
-            ctx.cpu.regST--;
+            c8_ctx.cpu.regST--;
         }
-        ctx.wait_for_vblank = false;
+        c8_ctx.wait_for_vblank = false;
 
         // fetch-decode-execute loop
-        for (int i = 0; i < 2000/60; i++)
+        for (int i = 0; i < settings.c8_frequency*GetFrameTime(); i++)
         {
             // fetch
-            uint8_t instruction_top    = ctx.ram[ctx.cpu.regPC];
-            uint8_t instruction_bottom = ctx.ram[ctx.cpu.regPC + 1];
+            uint8_t instruction_top    = c8_ctx.ram[c8_ctx.cpu.regPC];
+            uint8_t instruction_bottom = c8_ctx.ram[c8_ctx.cpu.regPC + 1];
             uint16_t instruction = (instruction_top << 8) | instruction_bottom;
             //printf("%x: %x\n", ctx.cpu.regPC, instruction);
-            ctx.cpu.regPC += 2;
+            c8_ctx.cpu.regPC += 2;
 
             // decode and execute
-            bool success = C8_Decode_And_Execute_Instruction(instruction, &ctx);
+            bool success = C8_Decode_And_Execute_Instruction(instruction, &c8_ctx);
             if (!success)
-                ctx.cpu.regPC -= 2;
+                c8_ctx.cpu.regPC -= 2;
 
-            if (ctx.wait_for_vblank)
+            if (c8_ctx.wait_for_vblank)
                 break;
         }
 
         // update inputs
         for (int i = 0; i < 16; i++)
-            ctx.keyboard.old.key[i] = ctx.keyboard.new.key[i];
+            c8_ctx.keyboard.previous.key[i] = c8_ctx.keyboard.current.key[i];
         for (int i = 0; i < 16; i++)
-            ctx.keyboard.new.key[i] = IsKeyDown(input_bindings.key[i]);
+            c8_ctx.keyboard.current.key[i] = IsKeyDown(settings.c8_input_bindings.key[i]);
 
         // -----------------------------------
         // RENDER
 
+        static Camera2D cam2D;
+        cam2D.offset = (Vector2){GetScreenWidth()/2.0f, GetScreenHeight()/2.0f};
+        cam2D.target = (Vector2){
+            64*settings.display_pixel_size/2.0f, 
+            32*settings.display_pixel_size/2.0f
+        };
+        cam2D.rotation = 0.0f;
+        cam2D.zoom = 1.0f;
+
         BeginDrawing();
-        ClearBackground(WHITE);
+        ClearBackground(GRAY);
+        BeginMode2D(cam2D);
+        
+        // ------------------------------------
+        // draw c8 display
+        
         for (uint16_t y = 0; y < 32; y++)
         {
             for (uint16_t x = 0; x < 64; x++)
             {
-                static const int rect_size = 10;
-                if (ctx.display[y][x])
-                    DrawRectangle(x * rect_size, y * rect_size, rect_size, rect_size, ORANGE);
+                if (c8_ctx.display[y][x])
+                    DrawRectangle(
+                            x * settings.display_pixel_size, 
+                            y * settings.display_pixel_size, 
+                            settings.display_pixel_size, 
+                            settings.display_pixel_size, 
+                            settings.on_pixel_color);
                 else
-                    DrawRectangle(x * rect_size, y * rect_size, rect_size, rect_size, BLACK);
-                
+                    DrawRectangle(
+                            x * settings.display_pixel_size, 
+                            y * settings.display_pixel_size, 
+                            settings.display_pixel_size, 
+                            settings.display_pixel_size, 
+                            settings.off_pixel_color);
             }
         }
+        EndMode2D();
+
+        // ------------------------------------
+        // draw gui
+
+        rlImGuiBegin();
+        if (ImGui::BeginMainMenuBar())
+        {
+            if (ImGui::BeginMenu("Settings"))
+            {
+                if (ImGui::InputInt("Target FPS", &settings.targetFPS))
+                {
+                    if (settings.targetFPS < 5)
+                        settings.targetFPS = 5;
+                    SetTargetFPS(settings.targetFPS);
+                }
+                if (ImGui::InputInt("CHIP-8 chip frequency", &settings.c8_frequency))
+                {
+                    if (settings.c8_frequency < 0)
+                        settings.c8_frequency = 0;
+                }
+                if (ImGui::InputInt("Display pixel size", &settings.display_pixel_size))
+                {
+                    if (settings.display_pixel_size < 0)
+                        settings.display_pixel_size = 0;
+                }
+
+                // napraviti:
+                // off pixel color select
+                // on pixel color select
+                // input binding select
+                // .c8 file loading
+
+                ImGui::EndMenu();
+            }
+
+            ImGui::EndMainMenuBar();
+        }
+        rlImGuiEnd();
+
         EndDrawing();
     }
    
     UnloadSound(beep);
     MemFree(samples);
+    rlImGuiShutdown();
     CloseAudioDevice();
     CloseWindow();
 }
@@ -287,6 +376,23 @@ int main()
 C8_Context Load_C8_Context(const char* program_filepath)
 {
     C8_Context ctx = {0};
+
+    const uint8_t font_0[5] = {0xF0, 0x90, 0x90, 0x90, 0xF0};
+    const uint8_t font_1[5] = {0x20, 0x60, 0x20, 0x20, 0x70};
+    const uint8_t font_2[5] = {0xF0, 0x10, 0xF0, 0x80, 0xF0};
+    const uint8_t font_3[5] = {0xF0, 0x10, 0xF0, 0x10, 0xF0};
+    const uint8_t font_4[5] = {0x90, 0x90, 0xF0, 0x10, 0x10};
+    const uint8_t font_5[5] = {0xF0, 0x80, 0xF0, 0x10, 0xF0};
+    const uint8_t font_6[5] = {0xF0, 0x80, 0xF0, 0x90, 0xF0};
+    const uint8_t font_7[5] = {0xF0, 0x10, 0x20, 0x40, 0x40};
+    const uint8_t font_8[5] = {0xF0, 0x90, 0xF0, 0x90, 0xF0};
+    const uint8_t font_9[5] = {0xF0, 0x90, 0xF0, 0x10, 0xF0};
+    const uint8_t font_A[5] = {0xF0, 0x90, 0xF0, 0x90, 0x90};
+    const uint8_t font_B[5] = {0xE0, 0x90, 0xE0, 0x90, 0xE0};
+    const uint8_t font_C[5] = {0xF0, 0x80, 0x80, 0x80, 0xF0};
+    const uint8_t font_D[5] = {0xE0, 0x90, 0x90, 0x90, 0xE0};
+    const uint8_t font_E[5] = {0xF0, 0x80, 0xF0, 0x80, 0xF0};
+    const uint8_t font_F[5] = {0xF0, 0x80, 0xF0, 0x80, 0x80};
 
     // ucitati fontset u C8_Context
     for (int i = 0; i < 5; i++)
@@ -710,7 +816,7 @@ bool Inst_SKP_reg(C8_Context* ctx, uint16_t instruction)
 
     const uint8_t value = ctx->cpu.reg[Vx];
 
-    if (ctx->keyboard.new.key[value])
+    if (ctx->keyboard.current.key[value])
         ctx->cpu.regPC += 2;
 
     return true;
@@ -722,7 +828,7 @@ bool Inst_SKNP_reg(C8_Context* ctx, uint16_t instruction)
 
     const uint8_t value = ctx->cpu.reg[Vx];
 
-    if (!ctx->keyboard.new.key[value])
+    if (!ctx->keyboard.current.key[value])
         ctx->cpu.regPC += 2;
 
     return true;
@@ -741,7 +847,7 @@ bool Inst_LD_reg_K(C8_Context* ctx, uint16_t instruction)
 {
     for (uint8_t i = 0; i < 16; i++)
     {
-        if (!ctx->keyboard.new.key[i] && ctx->keyboard.old.key[i])
+        if (!ctx->keyboard.current.key[i] && ctx->keyboard.previous.key[i])
         {
             uint8_t Vx = (instruction & 0x0F00) >> 8;
 

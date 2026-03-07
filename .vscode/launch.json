@@ -5,7 +5,7 @@
             "name": "Debug with LLDB",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/build/chip8_c",
+            "program": "${workspaceFolder}/build/vid_decoder_testing_cpp",
             "args": [],
             "cwd": "${workspaceFolder}/build",
             "stopOnEntry": false,
